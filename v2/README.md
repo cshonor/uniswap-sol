@@ -1,11 +1,11 @@
-# CPAMM 模块
+# Uniswap V2 模块
 
 本模块按照 Uniswap V2 的架构模式组织，分为 **Core**（核心）和 **Periphery**（外围）两部分。
 
 ## 文件夹结构
 
 ```
-cpamm/
+v2/
 ├── core/                           # 核心合约（Core）
 │   ├── CPAMM.sol                  # 交易对合约（类似 Uniswap V2 Pair）
 │   └── CPAMMFactory.sol           # 工厂合约（类似 Uniswap V2 Factory）
@@ -89,14 +89,14 @@ npx hardhat compile
 
 ```bash
 # 测试 CPAMM 核心功能
-npx hardhat test cpamm/test/CPAMM.test.js
+npx hardhat test v2/test/CPAMM.test.js
 ```
 
 ### 部署合约
 
 ```bash
 # 部署 CPAMM 到本地网络
-npx hardhat run cpamm/periphery/deployCPAMM.js --network localhost
+npx hardhat run v2/periphery/deployCPAMM.js --network localhost
 ```
 
 ## 三个合约的关系
@@ -149,7 +149,7 @@ npx hardhat compile
 
 ```bash
 # 测试 CPAMM 核心功能
-npx hardhat test cpamm/test/CPAMM.test.js
+npx hardhat test v2/test/CPAMM.test.js
 ```
 
 ### 3. 部署到本地网络
@@ -159,7 +159,7 @@ npx hardhat test cpamm/test/CPAMM.test.js
 npx hardhat node
 
 # 部署合约（另一个终端）
-npx hardhat run cpamm/periphery/deployCPAMM.js --network localhost
+npx hardhat run v2/periphery/deployCPAMM.js --network localhost
 ```
 
 ## 合约地址说明
