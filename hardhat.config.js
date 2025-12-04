@@ -20,7 +20,7 @@ module.exports = {
     },
   },
   paths: {
-    sources: "./contracts",
+    sources: "./contracts", // 主要合约目录，同时也支持 cpamm/core 目录
     tests: "./test",
     cache: "./cache",
     artifacts: "./artifacts",
