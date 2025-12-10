@@ -131,9 +131,20 @@ contract CPAMMRouter {
     }
     
     /**
-     * @dev 精确输入交换（知道输入数量，计算输出数量）
-     * @param amountIn 输入代币数量
-     * @param amountOutMin 最小输出数量（滑点保护）
+     * @dev 精确输入交换（定输入量，求最少输出）
+     * 
+     * 核心逻辑：我要花掉精确数量的 A 代币，换回至少 X 数量的 B 代币
+     * 
+     * 关键特点：
+     * - 输入代币的数量是"精确固定"的（比如我确定要花 100 USDT）
+     * - 需要指定"输出代币的最小接收量"（amountOutMin），防止滑点导致换到的代币太少
+     * - 最终兑换结果：实际换到的 B 代币 ≥ amountOutMin（满足则成交，否则回滚）
+     * 
+     * 使用场景：想精准控制"花多少钱"，比如我就想花 100 USDT，不管能换多少 ETH，
+     *           只要不少于 0.02 ETH 就行。
+     * 
+     * @param amountIn 输入代币数量（精确固定值）
+     * @param amountOutMin 最小输出数量（滑点保护，实际输出必须 ≥ 此值）
      * @param path 交换路径 [tokenIn, tokenOut]
      * @param to 接收代币的地址
      * @param deadline 交易截止时间
@@ -156,9 +167,20 @@ contract CPAMMRouter {
     }
     
     /**
-     * @dev 精确输出交换（知道输出数量，计算输入数量）
-     * @param amountOut 期望的输出代币数量
-     * @param amountInMax 最大输入数量（滑点保护）
+     * @dev 精确输出交换（定输出量，求最多输入）
+     * 
+     * 核心逻辑：我要换到精确数量的 B 代币，最多花 X 数量的 A 代币
+     * 
+     * 关键特点：
+     * - 输出代币的数量是"精确固定"的（比如我确定要换 0.02 ETH）
+     * - 需要指定"输入代币的最大花费量"（amountInMax），防止滑点导致花太多钱
+     * - 最终兑换结果：实际花的 A 代币 ≤ amountInMax（满足则成交，否则回滚）
+     * 
+     * 使用场景：想精准控制"换到多少币"，比如我就想要 0.02 ETH，不管花多少 USDT，
+     *           只要不超过 100 USDT 就行。
+     * 
+     * @param amountOut 期望的输出代币数量（精确固定值）
+     * @param amountInMax 最大输入数量（滑点保护，实际输入必须 ≤ 此值）
      * @param path 交换路径 [tokenIn, tokenOut]
      * @param to 接收代币的地址
      * @param deadline 交易截止时间
