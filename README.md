@@ -87,12 +87,21 @@ npx hardhat run scripts/deployCPAMM.js --network <network-name>
 cpamm.addLiquidity(amount0, amount1);
 ```
 
+**重要原则**：
+- **初始流动性决定代币价格**：首次添加流动性时，两种代币的数量比例决定了初始价格
+- **添加流动性不能影响价格**：后续添加流动性时，必须按照当前池中的代币比例添加，以保持价格不变
+- **比例保持公式**：`(x + dx) / (y + dy) = x / y`，其中 `x`、`y` 是当前储备量，`dx`、`dy` 是新增的流动性
+
 ### 2. 移除流动性 (`removeLiquidity`)
 销毁流动性代币，取回对应的两种代币。
 
 ```solidity
 cpamm.removeLiquidity(liquidity);
 ```
+
+**重要原则**：
+- **移除流动性不能影响价格**：移除流动性时，按照当前池中的代币比例移除，保持价格不变
+- 移除的两种代币数量与 LP tokens 的比例成正比
 
 ### 3. 代币交换 (`swap`)
 使用恒定乘积公式进行代币交换。
@@ -130,6 +139,29 @@ uint256 amountOut = cpamm.getAmountOut(amountIn, reserveIn, reserveOut);
 - 交换后乘积保持不变（或略微增加）
 - 价格随交易量自动调整
 - 池子永远不会被抽干
+
+### 价格确定机制
+
+在 CPAMM 中，代币价格由池中的储备量比例决定：
+
+```
+价格 = reserve1 / reserve0
+```
+
+例如，如果池中有 10 ETH 和 20,000 USDT，则：
+- ETH 价格 = 20,000 / 10 = 2,000 USDT/ETH
+- USDT 价格 = 10 / 20,000 = 0.0005 ETH/USDT
+
+### 流动性操作的价格不变性
+
+**添加流动性时**：
+- 必须按照当前价格比例添加：`dx / dy = x / y`
+- 这确保了 `(x + dx) / (y + dy) = x / y`，价格保持不变
+- 如果比例不匹配，多余的代币会被退回或要求补充
+
+**移除流动性时**：
+- 按照 LP tokens 的比例移除：`dx / x = dy / y = liquidity / totalSupply`
+- 这确保了移除后 `(x - dx) / (y - dy) = x / y`，价格保持不变
 
 ## 重要概念
 
