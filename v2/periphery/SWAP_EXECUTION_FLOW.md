@@ -88,7 +88,7 @@ function _getAmountsOut(uint256 amountIn, address[] memory path)
     
     // 正向计算：从第一跳到最后一跳
     for (uint256 i; i < path.length - 1; i++) {
-        address pair = _pairFor(path[i], path[i + 1]);
+        address pair = _pairFor(path[i], path[i + 1]);  // 获取交易对地址
         (uint256 reserveIn, uint256 reserveOut) = _getReserves(pair, path[i], path[i + 1]);
         // 根据恒定乘积公式计算输出
         amounts[i + 1] = CPAMM(pair).getAmountOut(amounts[i], reserveIn, reserveOut);
@@ -150,6 +150,52 @@ function _getAmountsIn(uint256 amountOut, address[] memory path)
   - 输入：amounts[0] = 1000 DAI（假设）
 
 返回：amounts = [1000, 1000, 50]
+```
+
+#### `_pairFor`：获取交易对地址
+
+在计算过程中，需要获取每个交易对的地址。`_pairFor` 函数用于根据两个代币地址查找对应的流动性池地址。
+
+```solidity
+function _pairFor(address tokenA, address tokenB)
+    internal view returns (address pair)
+{
+    // 1. 对代币地址排序（确保 token0 < token1）
+    (address token0, address token1) = _sortTokens(tokenA, tokenB);
+    
+    // 2. 从 Factory 合约获取交易对地址
+    pair = factory.getPair(token0, token1);
+}
+```
+
+**工作原理：**
+
+1. **排序代币**：先对两个代币地址排序，确保 `token0 < token1`
+   - 无论传入 `[DAI, USDT]` 还是 `[USDT, DAI]`，都会排序为 `token0 = DAI, token1 = USDT`
+
+2. **查询 Factory**：从 Factory 合约的映射中获取交易对地址
+   ```solidity
+   // Factory 合约中的映射
+   mapping(address => mapping(address => address)) public getPair;
+   // getPair[token0][token1] = pairAddress
+   ```
+
+3. **返回地址**：返回交易对合约的地址，如果不存在则返回零地址
+
+**为什么需要这个函数？**
+
+- **统一接口**：无论用户传入什么顺序的代币，都能正确找到交易对
+- **封装排序逻辑**：将排序和查询封装在一起，代码更清晰
+- **支持多跳兑换**：在多跳兑换中，需要频繁获取不同交易对的地址
+
+**使用示例：**
+```solidity
+// 获取 DAI/USDT 交易对地址
+address pair = _pairFor(DAI, USDT);  // 或 _pairFor(USDT, DAI)，结果相同
+
+// 在多跳兑换中使用
+address pair1 = _pairFor(path[0], path[1]);      // 第一跳
+address pair2 = _pairFor(path[1], path[2]);      // 第二跳
 ```
 
 #### 核心公式
