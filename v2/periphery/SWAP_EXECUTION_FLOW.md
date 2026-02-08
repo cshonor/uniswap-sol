@@ -42,6 +42,26 @@ DAI/USDT Pair (流动性池合约)
 - `swapExactTokensForTokens(amountIn, amountOutMin, path, to, deadline)`
 - 或 `swapTokensForExactTokens(amountOut, amountInMax, path, to, deadline)`
 
+**实际使用示例：**
+
+```solidity
+// 示例：用 1 WETH 兑换 USDT
+// 市场价：1 WETH = 2000 USDT
+// 根据池子储备量计算，实际可以得到 1990 USDT（考虑手续费和滑点）
+router.swapExactTokensForTokens(
+    1 * 10**18,           // amountIn: 1 WETH（精确输入）
+    1950 * 10**6,         // amountOutMin: 至少 1950 USDT（滑点保护）
+    [WETH, USDT],         // path: 兑换路径
+    userAddress,          // to: 接收地址
+    deadline             // deadline: 交易截止时间
+);
+```
+
+**参数说明：**
+- `amountIn = 1 WETH`：确定要花费的输入代币数量
+- `amountOutMin = 1950 USDT`：滑点保护，如果实际得到少于 1950 USDT，交易会回滚
+- 实际可能得到：1990 USDT（根据池子储备量计算，考虑 0.3% 手续费）
+
 **路由合约此时执行：**
 1. 验证 `deadline` 是否过期
 2. 验证 `path` 是否有效（至少包含 2 个代币地址）
@@ -359,6 +379,152 @@ USDT/MKR 池子执行交换：
 
 - Pair 合约使用 `_safeTransfer` 防止重入攻击
 - 先更新储备量，再转移代币（Checks-Effects-Interactions 模式）
+
+---
+
+## 🔧 路由合约内部实现：`_swap` 函数
+
+`_swap` 函数是路由合约的核心内部函数，负责执行多跳兑换的实际逻辑。这是路由合约的关键实现。
+
+### 函数签名
+
+```solidity
+function _swap(
+    uint256[] memory amounts,  // 每跳的输入/输出数量数组
+    address[] memory path,     // 代币路径数组
+    address _to                // 最终接收代币的地址
+) internal virtual
+```
+
+### 核心实现逻辑
+
+```solidity
+function _swap(uint256[] memory amounts, address[] memory path, address _to) 
+    internal virtual 
+{
+    // 循环处理路径中的每一跳
+    for (uint256 i; i < path.length - 1; i++) {
+        // 1. 提取当前跳的输入和输出代币
+        (address input, address output) = (path[i], path[i + 1]);
+        
+        // 2. 对代币地址排序（确保 token0 < token1）
+        (address token0,) = _sortTokens(input, output);
+        
+        // 3. 获取当前跳的输出数量
+        uint256 amountOut = amounts[i + 1];
+        
+        // 4. 根据代币顺序确定 amount0Out 和 amount1Out
+        (uint256 amount0Out, uint256 amount1Out) = input == token0
+            ? (uint256(0), amountOut)      // input 是 token0
+            : (amountOut, uint256(0));      // input 是 token1
+        
+        // 5. 确定接收地址
+        // 如果是中间跳，接收地址是下一个池子
+        // 如果是最后一跳，接收地址是最终用户
+        address to = i < path.length - 2 
+            ? _pairFor(output, path[i + 2])  // 中间跳：下一个池子
+            : _to;                            // 最后一跳：最终用户
+        
+        // 6. 获取当前池子地址并执行交换
+        address pair = _pairFor(input, output);
+        CPAMM(pair).swap(input, amounts[i], 0, to);
+    }
+}
+```
+
+### 关键步骤详解
+
+#### 1. 循环处理每一跳
+
+```solidity
+for (uint256 i; i < path.length - 1; i++)
+```
+
+- 对于路径 `[DAI, USDT, MKR]`，会执行 2 次循环：
+  - `i = 0`: 处理 DAI → USDT
+  - `i = 1`: 处理 USDT → MKR
+
+#### 2. 代币排序
+
+```solidity
+(address token0,) = _sortTokens(input, output);
+```
+
+- Uniswap V2 要求池子中的代币按地址排序（`token0 < token1`）
+- 这确保了与池子交互时的一致性
+
+#### 3. 确定输出数量
+
+```solidity
+uint256 amountOut = amounts[i + 1];
+```
+
+- `amounts` 数组在调用 `_swap` 前已经通过 `_getAmountsOut` 或 `_getAmountsIn` 计算好
+- `amounts[0]` = 输入代币数量
+- `amounts[1]` = 第一跳的输出数量
+- `amounts[2]` = 第二跳的输出数量（如果有）
+- ...
+
+#### 4. 设置 amount0Out 和 amount1Out
+
+```solidity
+(uint256 amount0Out, uint256 amount1Out) = input == token0
+    ? (uint256(0), amountOut)
+    : (amountOut, uint256(0));
+```
+
+- Pair 合约的 `swap` 函数需要知道输出的是 `token0` 还是 `token1`
+- 如果输入是 `token0`，则 `amount0Out = 0, amount1Out = amountOut`
+- 如果输入是 `token1`，则 `amount0Out = amountOut, amount1Out = 0`
+
+#### 5. 确定接收地址（关键！）
+
+```solidity
+address to = i < path.length - 2 
+    ? _pairFor(output, path[i + 2])  // 中间跳
+    : _to;                            // 最后一跳
+```
+
+**这是多跳兑换的关键逻辑：**
+
+- **中间跳**（`i < path.length - 2`）：
+  - 接收地址是**下一个池子**
+  - 例如：DAI → USDT 时，USDT 会转到 USDT/MKR 池子
+- **最后一跳**（`i == path.length - 2`）：
+  - 接收地址是**最终用户**（`_to`）
+  - 例如：USDT → MKR 时，MKR 会转到用户地址
+
+#### 6. 执行交换
+
+```solidity
+CPAMM(pair).swap(input, amounts[i], 0, to);
+```
+
+- 调用底层 Pair 合约的 `swap` 函数
+- `amounts[i]` 是当前跳的输入数量
+- `to` 是接收输出代币的地址
+
+### 示例：DAI → USDT → MKR
+
+假设 `path = [DAI, USDT, MKR]`，`amounts = [1000, 1000, 50]`（已计算好）：
+
+**第一次循环（i = 0）：**
+- `input = DAI`, `output = USDT`
+- `amountOut = 1000` (USDT)
+- `to = USDT/MKR 池子地址`（因为还有下一跳）
+- 执行：DAI/USDT 池子将 1000 USDT 转到 USDT/MKR 池子
+
+**第二次循环（i = 1）：**
+- `input = USDT`, `output = MKR`
+- `amountOut = 50` (MKR)
+- `to = 用户地址`（这是最后一跳）
+- 执行：USDT/MKR 池子将 50 MKR 转到用户地址
+
+### 为什么这样设计？
+
+1. **原子性**：所有跳在一个交易中完成，要么全部成功，要么全部失败
+2. **效率**：中间代币不需要先转给用户再转给下一个池子
+3. **安全性**：路由合约作为中间代币的临时持有者，但不长期持有
 
 ---
 
