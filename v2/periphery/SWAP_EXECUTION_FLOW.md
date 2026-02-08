@@ -169,30 +169,176 @@ IERC20(tokenOut).transfer(
 
 ---
 
+## 📍 路径（Path）的概念
+
+### 什么是路径？
+
+路径（`path`）是一个代币地址数组，定义了从输入代币到输出代币的兑换路线。**只要存在路径，就可以转换过去**。
+
+### 路径的基本规则
+
+1. **路径长度**：至少包含 2 个代币地址（直接兑换）
+2. **路径顺序**：第一个是输入代币，最后一个是输出代币
+3. **中间代币**：路径中的每个相邻代币对必须存在流动性池
+
+### 路径示例
+
+#### 示例 1：直接兑换（2 跳）
+```
+Token A → USDT
+path = [TokenA, USDT]
+```
+需要存在：TokenA/USDT 流动性池
+
+#### 示例 2：通过中间代币（3 跳）
+```
+Token A → USDT/USDD → wBTC
+path = [TokenA, USDT, wBTC]
+```
+需要存在：
+- TokenA/USDT 流动性池
+- USDT/wBTC 流动性池
+
+#### 示例 3：多跳兑换（4 跳）
+```
+Token A → USDT → USDD → wBTC
+path = [TokenA, USDT, USDD, wBTC]
+```
+需要存在：
+- TokenA/USDT 流动性池
+- USDT/USDD 流动性池
+- USDD/wBTC 流动性池
+
+### 路径选择的原则
+
+**核心思想**：只要路径上的每个相邻代币对都有流动性池，就可以完成兑换。
+
+**路径选择的考虑因素**：
+1. **流动性深度**：选择流动性更好的路径，减少滑点
+2. **手续费**：多跳兑换会产生多次手续费
+3. **价格影响**：直接兑换可能比多跳兑换价格更好
+4. **路径存在性**：必须确保路径上的每个池子都存在
+
+### 路径不存在的处理
+
+如果指定的路径中某个池子不存在，交易会失败并回滚。路由合约会检查：
+- 每个池子是否由 Factory 创建
+- 每个池子是否有足够的流动性
+
+---
+
 ## 多跳兑换流程
 
-当 `path` 包含多个代币时（例如 `[USDC, WETH, DAI]`），路由合约会依次在多个池子中执行交换：
+当 `path` 包含多个代币时（例如 `[DAI, USDT, MKR]`），路由合约会依次在多个池子中执行交换。
+
+### 示例：DAI → USDT → MKR
+
+假设用户想要将 DAI 兑换成 MKR，但 DAI/MKR 池子不存在或流动性不足，可以通过 USDT 作为中间代币：
 
 ```
-用户
+用户 (User)
+  │
+  │ ① 调用 swapExactTokensForTokens 或 swapTokensForExactTokens
+  │    path = [DAI, USDT, MKR]
   ↓
-Router02.sol
-  ↓ transferFrom (USDC)
-USDC/WETH Pair
-  ↓ swap (USDC → WETH)
-  ↓ transfer (WETH)
-Router02.sol
-  ↓ transferFrom (WETH)
-WETH/DAI Pair
-  ↓ swap (WETH → DAI)
-  ↓ transfer (DAI)
-用户收到 DAI
+Router02.sol (路由合约)
+  │
+  │ ② transferFrom (DAI 从用户转移到 DAI/USDT 池子)
+  ↓
+DAI/USDT Pair (第一个流动性池)
+  │
+  │ ③ Swap (DAI → USDT，执行第一次交换)
+  │
+  │ ④ transfer (USDT 转给路由合约)
+  ↓
+Router02.sol (路由合约)
+  │
+  │ ⑤ transferFrom (USDT 从路由合约转移到 USDT/MKR 池子)
+  ↓
+USDT/MKR Pair (第二个流动性池)
+  │
+  │ ⑥ Swap (USDT → MKR，执行第二次交换)
+  │
+  │ ⑦ transfer (MKR 转回用户)
+  ↓
+用户收到 MKR
 ```
 
-**关键点：**
-- 中间代币（如 WETH）会先转到路由合约，再转到下一个池子
-- 路由合约作为中间代币的临时持有者，但不长期持有
-- 整个过程在一个交易中完成，原子性保证
+### 详细步骤说明（DAI → USDT → MKR）
+
+#### 步骤 ①：用户调用路由合约
+
+```solidity
+router.swapExactTokensForTokens(
+    1000 * 10**18,        // amountIn: 1000 DAI
+    50 * 10**18,          // amountOutMin: 至少 50 MKR
+    [DAI, USDT, MKR],     // path: 多跳路径
+    userAddress,          // to: 接收地址
+    deadline             // deadline
+);
+```
+
+#### 步骤 ②：DAI 转移到第一个池子
+
+路由合约将 DAI 从用户转移到 DAI/USDT 池子：
+```solidity
+IERC20(DAI).transferFrom(user, daiUsdtPair, 1000 * 10**18);
+```
+
+#### 步骤 ③-④：第一次交换（DAI → USDT）
+
+DAI/USDT 池子执行交换：
+- 输入：1000 DAI
+- 输出：假设 1000 USDT（根据池子储备量计算）
+- USDT 转给路由合约
+
+#### 步骤 ⑤：USDT 转移到第二个池子
+
+路由合约将 USDT 转移到 USDT/MKR 池子：
+```solidity
+IERC20(USDT).transferFrom(router, usdtMkrPair, 1000 * 10**6);
+```
+
+#### 步骤 ⑥-⑦：第二次交换（USDT → MKR）
+
+USDT/MKR 池子执行交换：
+- 输入：1000 USDT
+- 输出：假设 50 MKR（根据池子储备量计算）
+- MKR 转回用户
+
+### 关键点
+
+1. **中间代币的流转**：
+   - USDT 作为中间代币，会先转到路由合约，再转到下一个池子
+   - 路由合约作为中间代币的临时持有者，但不长期持有
+   - 整个过程在一个交易中完成，原子性保证
+
+2. **路径要求**：
+   - **只要路径存在，就可以完成兑换**：只要 DAI/USDT 和 USDT/MKR 这两个池子都存在，就可以完成 DAI → MKR 的兑换
+   - 如果路径中任何一个池子不存在，整个交易会失败并回滚
+
+3. **滑点保护**：
+   - `amountOutMin` 是针对最终输出（MKR）的保护
+   - 如果最终得到的 MKR 少于 `amountOutMin`，整个交易会回滚
+   - 即使中间某一步价格不利，只要最终结果满足要求，交易就会成功
+
+4. **手续费**：
+   - 每跳都会产生手续费（通常为 0.3%）
+   - DAI → USDT：产生手续费
+   - USDT → MKR：产生手续费
+   - 总手续费 = 第一跳手续费 + 第二跳手续费
+
+### 多跳兑换的优势
+
+1. **扩大交易对范围**：即使两个代币之间没有直接池子，也可以通过中间代币兑换
+2. **可能获得更好的价格**：通过流动性更好的中间代币，有时能获得比直接兑换更好的价格
+3. **灵活性**：可以选择不同的路径来优化交易结果
+
+### 多跳兑换的劣势
+
+1. **更高的手续费**：每跳都会产生手续费
+2. **更高的滑点**：多次交换累积的滑点可能更大
+3. **更复杂的计算**：需要计算每跳的输出，确保最终结果满足要求
 
 ---
 
