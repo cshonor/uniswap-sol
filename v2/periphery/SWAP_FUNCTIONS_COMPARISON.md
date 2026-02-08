@@ -150,6 +150,20 @@ function swapTokensForExactTokens(
 
 ---
 
+## 🔄 执行流程
+
+详细的代币交换执行流程（包括 4 个步骤：调用、transferFrom、swap、transfer）请参考：
+
+👉 **[代币交换执行流程详解](./SWAP_EXECUTION_FLOW.md)**
+
+该文档包含：
+- 完整的流程图和步骤说明
+- 代码示例和实现细节
+- 多跳兑换流程
+- 安全考虑和最佳实践
+
+---
+
 ## 🔍 数学公式对比
 
 ### swapExactTokensForTokens
