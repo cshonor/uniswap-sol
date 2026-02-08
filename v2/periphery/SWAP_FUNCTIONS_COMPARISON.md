@@ -3,8 +3,18 @@
 ## 📋 核心区别
 
 这两个函数的核心区别，在于兑换的 **"目标逻辑"** 完全相反：
-- **swapExactTokensForTokens**：定输入量，求最少输出
-- **swapTokensForExactTokens**：定输出量，求最多输入
+- **swapExactTokensForTokens**：定输入量，求尽可能多的输出
+- **swapTokensForExactTokens**：定输出量，求尽可能少的输入
+
+### 🎯 核心记忆技巧
+
+**Exact 的位置决定确定的是哪个值：**
+- **Exact 在左边（输入位置）** → `swapExactTokensForTokens` → 确定输入，换尽可能多的输出
+- **Exact 在右边（输出位置）** → `swapTokensForExactTokens` → 确定输出，花尽可能少的输入
+
+**简单记法：**
+- `swapExactInForOut`：固定输入，换输出
+- `swapInForExactOut`：固定输出，用输入
 
 ---
 
@@ -92,23 +102,51 @@ function swapTokensForExactTokens(
 |------|-------------------------|-------------------------|
 | **固定值** | 输入代币数量（精确） | 输出代币数量（精确） |
 | **限制值** | 输出代币最小量（`amountOutMin`） | 输入代币最大量（`amountInMax`） |
-| **核心诉求** | 花固定的钱，换至少 X 的币 | 换固定的币，最多花 X 的钱 |
+| **核心诉求** | 花固定的钱，换尽可能多的币 | 换固定的币，花尽可能少的钱 |
 | **计算方向** | 正向：输入 → 输出 | 反向：输出 → 输入 |
 | **使用的辅助函数** | `_getAmountsOut()` | `_getAmountsIn()` |
 | **检查条件** | `实际输出 >= amountOutMin` | `实际输入 <= amountInMax` |
 | **失败原因** | 输出太少（滑点过大） | 输入太多（滑点过大） |
+| **适用场景** | 卖出导向：清空仓位，对卖出数量有明确要求 | 买入导向：精确买入某个数量（如支付费用） |
 
 ---
 
-## 💡 记忆技巧
+## 🔍 路由合约的角色
 
-**简单记法**：
-- **Exact 在 Tokens 前** → 是 **"输入精确"**（Exact Tokens For Tokens）
-- **Exact 在 Tokens 后** → 是 **"输出精确"**（Tokens For Exact Tokens）
+### 路由合约是什么？
 
-**中文理解**：
-- `swapExactTokensForTokens` = 用**精确的**代币换代币
-- `swapTokensForExactTokens` = 用代币换**精确的**代币
+路由合约（如 `UniswapV2Router02` 或 `CPAMMRouter`）是用户和底层流动性池之间的**中间层**，它的作用是：
+
+1. **交易调度员**：
+   - 处理代币授权
+   - 路径选择（根据你指定的 path）
+   - 滑点检查
+   - 多池兑换（如果 path 包含多个池）
+
+2. **不持有资金**：
+   - 路由合约本身不直接持有资金
+   - 不维护流动性池
+   - 只是作为接口层
+
+3. **最终执行在池子里**：
+   - 所有兑换操作最终都通过调用 `UniswapV2Pair` 合约的 `swap` 方法完成
+   - 每个 `UniswapV2Pair` 合约就是一个独立的流动性池
+
+### ⚠️ 重要说明：路由合约不会跨 DEX 寻找最优价格
+
+**路由合约的工作方式：**
+- ✅ 根据你指定的 `path` 参数，严格按照路径执行兑换
+- ✅ 例如 `path = [USDC, WETH, DAI]`，它会依次在 USDC-WETH 池和 WETH-DAI 池里进行兑换
+- ❌ **不会**自动扫描整个以太坊生态去寻找其他 DEX（如 SushiSwap、Curve）里更优的价格
+- ❌ **不会**跨协议寻找最优价格
+
+**跨 DEX 寻找最优价格的功能：**
+- 这个功能是由 **"聚合器"**（如 1inch、MetaSwap、Paraswap）来实现的
+- 聚合器会扫描多个 DEX，找到最优价格，然后可能通过路由合约执行交易
+
+**总结：**
+- **路由合约** = Uniswap V2 协议的入口和调度器，只在 Uniswap V2 内部操作
+- **聚合器** = 跨多个 DEX 寻找最优价格的工具
 
 ---
 
@@ -132,27 +170,58 @@ function swapTokensForExactTokens(
 
 ## 📝 实际使用示例
 
-### 示例 1：swapExactTokensForTokens
+### 示例 1：swapExactTokensForTokens（卖出导向）
+
+**场景**：我想卖出固定数量的代币，比如 "我要把 100 个 USDC 全部换成 ETH"
+
 ```javascript
 // 场景：我有 100 USDT，想换成 ETH，但至少要换到 0.02 ETH
 router.swapExactTokensForTokens(
-    100 * 10**18,           // amountIn: 精确花 100 USDT
-    0.02 * 10**18,          // amountOutMin: 至少换到 0.02 ETH
-    [USDT, WETH],           // path
-    myAddress,              // to
-    deadline                // deadline
+    100 * 10**18,           // amountIn: 精确花 100 USDT（确定值）
+    0.02 * 10**18,          // amountOutMin: 至少换到 0.02 ETH（滑点保护）
+    [USDT, WETH],           // path: 兑换路径
+    myAddress,              // to: 接收输出代币的地址
+    deadline                // deadline: 交易截止时间（防止过期）
 );
 ```
 
-### 示例 2：swapTokensForExactTokens
+**执行逻辑**：
+1. 先根据 `amountIn` 和当前池内储备金，计算出理论上能得到的 `amountOut`
+2. 检查 `amountOut` 是否大于等于 `amountOutMin`，如果不满足则交易回滚
+3. 从用户处转移 `amountIn` 数量的输入代币到池子
+4. 池子向用户转移计算出的 `amountOut` 数量的输出代币
+
+### 示例 2：swapTokensForExactTokens（买入导向）
+
+**场景**：我想买入固定数量的代币，比如 "我要买入 1 个 ETH，最多只愿意花 2000 个 USDC"
+
 ```javascript
 // 场景：我想要 0.02 ETH，用 USDT 换，但最多花 100 USDT
 router.swapTokensForExactTokens(
-    0.02 * 10**18,          // amountOut: 精确换到 0.02 ETH
-    100 * 10**18,           // amountInMax: 最多花 100 USDT
-    [USDT, WETH],           // path
-    myAddress,              // to
-    deadline                // deadline
+    0.02 * 10**18,          // amountOut: 精确换到 0.02 ETH（确定值）
+    100 * 10**18,           // amountInMax: 最多花 100 USDT（滑点保护）
+    [USDT, WETH],           // path: 兑换路径
+    myAddress,              // to: 接收地址
+    deadline                // deadline: 截止时间
+);
+```
+
+**执行逻辑**：
+1. 先根据 `amountOut` 和当前池内储备金，反推出需要付出的 `amountIn`
+2. 检查 `amountIn` 是否小于等于 `amountInMax`，如果不满足则交易回滚
+3. 从用户处转移计算出的 `amountIn` 数量的输入代币到池子
+4. 池子向用户转移 `amountOut` 数量的输出代币
+
+### 示例 3：多跳兑换（Multi-hop）
+
+```javascript
+// 场景：USDC → WETH → DAI（通过中间代币 WETH）
+router.swapExactTokensForTokens(
+    1000 * 10**6,           // amountIn: 1000 USDC
+    950 * 10**18,           // amountOutMin: 至少换到 950 DAI
+    [USDC, WETH, DAI],      // path: 多跳路径
+    myAddress,
+    deadline
 );
 ```
 
@@ -175,4 +244,13 @@ router.swapTokensForExactTokens(
 4. **选择建议**：
    - 如果你有**固定预算**（比如只有 100 USDT），用 `swapExactTokensForTokens`
    - 如果你有**固定需求**（比如需要 0.02 ETH），用 `swapTokensForExactTokens`
+
+5. **为什么需要这两个函数？**
+   - **卖出导向**：当你想清空某个仓位，或者对卖出的数量有明确要求时，使用 `swapExactTokensForTokens`
+   - **买入导向**：当你想精确地买入某个数量的代币（例如为了支付某个费用或参与某个活动），使用 `swapTokensForExactTokens`
+
+## 📌 一句话总结
+
+- **swapExactTokensForTokens**：我要花固定数量的 A，换尽可能多的 B（`amountOutMin` 是滑点保护）
+- **swapTokensForExactTokens**：我要得到固定数量的 B，只花最少的 A（`amountInMax` 是滑点保护）
 
