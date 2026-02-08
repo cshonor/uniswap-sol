@@ -68,6 +68,109 @@ router.swapExactTokensForTokens(
 3. 计算输出/输入数量（使用 `_getAmountsOut` 或 `_getAmountsIn`）
 4. 检查滑点保护（`amountOutMin` 或 `amountInMax`）
 
+### 详细说明：计算输出/输入数量
+
+路由合约需要预先计算每跳的输入和输出数量，以便：
+- 验证滑点保护
+- 传递给 `_swap` 函数执行实际交换
+
+#### `_getAmountsOut`：正向计算（已知输入，求输出）
+
+**使用场景**：`swapExactTokensForTokens`（固定输入，求输出）
+
+```solidity
+function _getAmountsOut(uint256 amountIn, address[] memory path)
+    internal view returns (uint256[] memory amounts)
+{
+    require(path.length >= 2, "INVALID_PATH");
+    amounts = new uint256[](path.length);
+    amounts[0] = amountIn;  // 第一个是输入数量
+    
+    // 正向计算：从第一跳到最后一跳
+    for (uint256 i; i < path.length - 1; i++) {
+        address pair = _pairFor(path[i], path[i + 1]);
+        (uint256 reserveIn, uint256 reserveOut) = _getReserves(pair, path[i], path[i + 1]);
+        // 根据恒定乘积公式计算输出
+        amounts[i + 1] = CPAMM(pair).getAmountOut(amounts[i], reserveIn, reserveOut);
+    }
+}
+```
+
+**计算过程示例**（DAI → USDT → MKR）：
+```
+输入：amountIn = 1000 DAI, path = [DAI, USDT, MKR]
+
+第1跳：DAI → USDT
+  - 输入：amounts[0] = 1000 DAI
+  - 根据 DAI/USDT 池子储备量计算
+  - 输出：amounts[1] = 1000 USDT（假设）
+
+第2跳：USDT → MKR
+  - 输入：amounts[1] = 1000 USDT
+  - 根据 USDT/MKR 池子储备量计算
+  - 输出：amounts[2] = 50 MKR（假设）
+
+返回：amounts = [1000, 1000, 50]
+```
+
+#### `_getAmountsIn`：反向计算（已知输出，求输入）
+
+**使用场景**：`swapTokensForExactTokens`（固定输出，求输入）
+
+```solidity
+function _getAmountsIn(uint256 amountOut, address[] memory path)
+    internal view returns (uint256[] memory amounts)
+{
+    require(path.length >= 2, "INVALID_PATH");
+    amounts = new uint256[](path.length);
+    amounts[amounts.length - 1] = amountOut;  // 最后一个是输出数量
+    
+    // 反向计算：从最后一跳到第一跳
+    for (uint256 i = path.length - 1; i > 0; i--) {
+        address pair = _pairFor(path[i - 1], path[i]);
+        (uint256 reserveIn, uint256 reserveOut) = _getReserves(pair, path[i - 1], path[i]);
+        // 反向计算：已知输出，求输入
+        amounts[i - 1] = _getAmountIn(amounts[i], reserveIn, reserveOut);
+    }
+}
+```
+
+**计算过程示例**（DAI → USDT → MKR）：
+```
+输入：amountOut = 50 MKR, path = [DAI, USDT, MKR]
+
+第2跳：USDT → MKR（反向）
+  - 输出：amounts[2] = 50 MKR
+  - 根据 USDT/MKR 池子储备量反向计算
+  - 输入：amounts[1] = 1000 USDT（假设）
+
+第1跳：DAI → USDT（反向）
+  - 输出：amounts[1] = 1000 USDT
+  - 根据 DAI/USDT 池子储备量反向计算
+  - 输入：amounts[0] = 1000 DAI（假设）
+
+返回：amounts = [1000, 1000, 50]
+```
+
+#### 核心公式
+
+**正向计算（`getAmountOut`）**：
+```
+amountOut = (amountIn * reserveOut) / (reserveIn + amountIn)
+```
+
+**反向计算（`getAmountIn`）**：
+```
+amountIn = (amountOut * reserveIn) / (reserveOut - amountOut) + 1
+```
+注意：反向计算需要 `+1` 来避免舍入误差。
+
+#### 为什么需要预先计算？
+
+1. **滑点保护**：在交易执行前就知道输出/输入数量，可以验证是否满足滑点要求
+2. **原子性**：所有计算在一个交易中完成，要么全部成功，要么全部失败
+3. **效率**：避免在交换过程中重复计算
+
 **代码示例：**
 ```solidity
 // 用户调用
