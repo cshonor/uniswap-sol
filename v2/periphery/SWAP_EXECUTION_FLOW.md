@@ -433,6 +433,8 @@ function _swap(uint256[] memory amounts, address[] memory path, address _to)
         
         // 2. 对代币地址排序（确保 token0 < token1）
         (address token0,) = _sortTokens(input, output);
+        // 注意：这里只接收 token0，忽略 token1
+        // Solidity 语法：用逗号可以跳过不需要的返回值
         
         // 3. 获取当前跳的输出数量
         uint256 amountOut = amounts[i + 1];
@@ -468,14 +470,88 @@ for (uint256 i; i < path.length - 1; i++)
   - `i = 0`: 处理 DAI → USDT
   - `i = 1`: 处理 USDT → MKR
 
-#### 2. 代币排序
+#### 2. 代币排序（为什么需要排序？）
 
 ```solidity
 (address token0,) = _sortTokens(input, output);
 ```
 
-- Uniswap V2 要求池子中的代币按地址排序（`token0 < token1`）
-- 这确保了与池子交互时的一致性
+**为什么需要对代币地址排序？**
+
+在 Uniswap V2 中，每个流动性池（Pair）合约在创建时就确定了 `token0` 和 `token1` 的顺序：
+
+```solidity
+// CPAMM 合约中的定义
+IERC20 public immutable token0;  // 地址较小的代币
+IERC20 public immutable token1;  // 地址较大的代币
+
+constructor(address _token0, address _token1) {
+    require(_token0 < _token1, "token0 must be less than token1");
+    token0 = IERC20(_token0);
+    token1 = IERC20(_token1);
+}
+```
+
+**排序的原因：**
+
+1. **确保一致性**：
+   - 池子中的储备量按 `reserve0`（对应 token0）和 `reserve1`（对应 token1）存储
+   - 无论用户传入 `[DAI, USDT]` 还是 `[USDT, DAI]`，都需要知道哪个是 token0，哪个是 token1
+
+2. **正确访问储备量**：
+   ```solidity
+   // 如果 input 是 token0，则 reserveIn = reserve0, reserveOut = reserve1
+   // 如果 input 是 token1，则 reserveIn = reserve1, reserveOut = reserve0
+   ```
+
+3. **正确设置输出数量**：
+   ```solidity
+   // 如果 input 是 token0，输出的是 token1，所以 amount0Out = 0, amount1Out = amountOut
+   // 如果 input 是 token1，输出的是 token0，所以 amount0Out = amountOut, amount1Out = 0
+   ```
+
+4. **防止重复创建池子**：
+   - Factory 合约通过 `token0 < token1` 的规则确保同一个交易对只有一个池子
+   - `[DAI, USDT]` 和 `[USDT, DAI]` 会被识别为同一个池子
+
+**排序实现：**
+```solidity
+function _sortTokens(address tokenA, address tokenB)
+    internal pure returns (address token0, address token1)
+{
+    // 按地址大小排序：地址较小的作为 token0
+    (token0, token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
+    require(token0 != address(0), "ZERO_ADDRESS");
+}
+```
+
+**为什么只接收 `token0`？**
+
+在 `_swap` 函数中，我们只需要知道 `token0` 是哪个，因为：
+
+```solidity
+(address token0,) = _sortTokens(input, output);
+```
+
+**Solidity 解构赋值语法：**
+- `_sortTokens` 返回两个值：`(address token0, address token1)`
+- 如果只需要第一个返回值，可以用逗号跳过第二个：`(address token0,)`
+- 这等价于：`address token0 = _sortTokens(input, output).token0;`（但 Solidity 不支持这种语法）
+
+**为什么只需要 `token0`？**
+
+因为我们可以通过比较 `input == token0` 来判断：
+- 如果 `input == token0`，则 `input` 是 token0，`output` 是 token1
+- 如果 `input != token0`，则 `input` 是 token1，`output` 是 token0
+
+所以不需要显式接收 `token1`，可以通过逻辑判断得出。
+
+**示例：**
+- 假设 `DAI` 地址 = `0x6B...`，`USDT` 地址 = `0xdA...`
+- 因为 `0x6B... < 0xdA...`，所以 `token0 = DAI`，`token1 = USDT`
+- 无论用户传入 `[DAI, USDT]` 还是 `[USDT, DAI]`，排序后都是 `token0 = DAI, token1 = USDT`
+- 如果 `input = DAI`，则 `input == token0` 为 `true`，说明输入是 token0
+- 如果 `input = USDT`，则 `input == token0` 为 `false`，说明输入是 token1
 
 #### 3. 确定输出数量
 
