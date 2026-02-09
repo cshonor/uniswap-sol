@@ -170,6 +170,197 @@ uint256 amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
 - 在实际交易前，应该使用最新的储备量进行计算
 - Router 合约会自动处理这些细节
 
+### 反向计算：`getAmountIn`（已知输出，求输入）
+
+`getAmountIn` 是 `getAmountOut` 的反向计算，用于 `swapTokensForExactTokens` 函数。
+
+**函数签名：**
+```solidity
+function getAmountIn(
+    uint256 amountOut,    // 输出的代币数量（用户想要得到的数量）
+    uint256 reserveIn,    // 输入代币在池子中的储备量
+    uint256 reserveOut     // 输出代币在池子中的储备量
+) public pure returns (uint256 amountIn) {
+    require(amountOut > 0, "Insufficient output amount");
+    require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
+    
+    // 从公式 dy = ((1-f) * dx * y₀) / (x₀ + (1-f) * dx)
+    // 推导：dx = (dy * x₀) / ((1-f) * (y₀ - dy))
+    // 使用整数运算：amountIn = (amountOut * reserveIn * 1000) / ((reserveOut - amountOut) * 997)
+    uint256 numerator = amountOut * reserveIn * 1000;
+    uint256 denominator = (reserveOut - amountOut) * 997;
+    amountIn = (numerator / denominator) + 1;  // +1 是为了避免舍入误差
+}
+```
+
+**公式推导：**
+
+从正向公式推导反向公式：
+
+```
+已知：dy = ((1-f) * dx * y₀) / (x₀ + (1-f) * dx)
+
+其中 f = 0.003, (1-f) = 0.997
+
+展开：dy * (x₀ + (1-f) * dx) = (1-f) * dx * y₀
+     dy * x₀ + dy * (1-f) * dx = (1-f) * dx * y₀
+     dy * x₀ = (1-f) * dx * (y₀ - dy)
+     
+因此：dx = (dy * x₀) / ((1-f) * (y₀ - dy))
+```
+
+**代码实现（整数运算）：**
+
+```solidity
+function getAmountIn(
+    uint256 amountOut,
+    uint256 reserveIn,
+    uint256 reserveOut
+) public pure returns (uint256 amountIn) {
+    require(amountOut > 0, "Insufficient output amount");
+    require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
+    
+    // 步骤 1: 计算分子
+    // 分子 = amountOut * reserveIn * 1000
+    // 等价于：dy * x₀ * 1000
+    uint256 numerator = amountOut * reserveIn * 1000;
+    
+    // 步骤 2: 计算分母
+    // 分母 = (reserveOut - amountOut) * 997
+    // 等价于：(y₀ - dy) * (1-f) * 1000，其中 (1-f) = 0.997
+    uint256 denominator = (reserveOut - amountOut) * 997;
+    
+    // 步骤 3: 计算输入数量
+    // amountIn = numerator / denominator + 1
+    // +1 是为了避免整数除法的舍入误差，确保有足够的输入
+    amountIn = (numerator / denominator) + 1;
+}
+```
+
+**计算示例：**
+
+假设：
+- `amountOut = 1000` USDT（用户想要得到的数量）
+- `reserveIn = 10000` DAI（池子中的 DAI 储备）
+- `reserveOut = 20000` USDT（池子中的 USDT 储备）
+
+**步骤 1：计算分子**
+```
+numerator = 1000 * 10000 * 1000 = 10,000,000,000
+```
+
+**步骤 2：计算分母**
+```
+denominator = (20000 - 1000) * 997 = 19000 * 997 = 18,943,000
+```
+
+**步骤 3：计算输入**
+```
+amountIn = 10,000,000,000 / 18,943,000 + 1 ≈ 528 + 1 = 529 DAI
+```
+
+**验证（使用小数运算）：**
+```
+amountIn = (1000 * 10000) / (0.997 * (20000 - 1000))
+         = 10,000,000 / (0.997 * 19000)
+         = 10,000,000 / 18,943
+         ≈ 527.8 DAI
+```
+
+结果一致！代码中的 `+1` 确保了有足够的输入来得到所需的输出。
+
+### 多跳反向计算：`getAmountsIn`（多跳交换的反向计算）
+
+`getAmountsIn` 用于计算多跳交换中，为了得到确定的输出数量，每一步需要的输入数量。
+
+**函数签名：**
+```solidity
+function getAmountsIn(
+    address factory,           // Factory 合约地址，用于获取交易对储备量
+    uint256 amountOut,         // 最终输出的代币数量（用户想要得到的数量）
+    address[] memory path      // 交换路径，如 [DAI, USDT, MKR]
+) internal view returns (uint256[] memory amounts) {
+    require(path.length >= 2, "UniswapV2Library: INVALID_PATH");
+    amounts = new uint256[](path.length);
+    
+    // 步骤 1: 设置最终输出数量
+    amounts[amounts.length - 1] = amountOut;
+    
+    // 步骤 2: 反向迭代计算每一步的输入
+    // 从路径的最后一个代币开始，向前计算每一步需要的输入
+    for (uint256 i = path.length - 1; i > 0; i--) {
+        // 获取当前交易对的储备量
+        (uint256 reserveIn, uint256 reserveOut) = getReserves(
+            factory, 
+            path[i - 1],  // 输入代币
+            path[i]       // 输出代币
+        );
+        
+        // 反向计算：已知输出，求输入
+        // amounts[i] 是当前步骤的输出（也是下一步的输入）
+        // amounts[i-1] 是当前步骤需要的输入
+        amounts[i - 1] = getAmountIn(amounts[i], reserveIn, reserveOut);
+    }
+    
+    return amounts;
+}
+```
+
+**核心逻辑：**
+
+1. **反向迭代**：从路径的最后一个代币开始，向前计算
+2. **每一步计算**：使用 `getAmountIn` 计算当前步骤需要的输入
+3. **链式计算**：每一步的输出是下一步的输入
+
+**计算过程示例**（DAI → USDT → MKR）：
+
+假设：
+- `amountOut = 50` MKR（最终想要得到的数量）
+- `path = [DAI, USDT, MKR]`
+- USDT/MKR 池子：reserveIn = 20000 USDT, reserveOut = 1000 MKR
+- DAI/USDT 池子：reserveIn = 10000 DAI, reserveOut = 20000 USDT
+
+**步骤 1：初始化**
+```
+amounts = [0, 0, 50]  // 最后一个是输出数量
+```
+
+**步骤 2：第 2 跳反向计算（USDT → MKR）**
+```
+i = 2 (path.length - 1)
+- 输出：amounts[2] = 50 MKR
+- 储备：reserveIn = 20000 USDT, reserveOut = 1000 MKR
+- 计算输入：amounts[1] = getAmountIn(50, 20000, 1000)
+           = (50 * 20000 * 1000) / ((1000 - 50) * 997) + 1
+           ≈ 1053 USDT
+```
+
+**步骤 3：第 1 跳反向计算（DAI → USDT）**
+```
+i = 1
+- 输出：amounts[1] = 1053 USDT（上一步的输入）
+- 储备：reserveIn = 10000 DAI, reserveOut = 20000 USDT
+- 计算输入：amounts[0] = getAmountIn(1053, 10000, 20000)
+           = (1053 * 10000 * 1000) / ((20000 - 1053) * 997) + 1
+           ≈ 558 DAI
+```
+
+**最终结果：**
+```
+amounts = [558, 1053, 50]
+含义：
+- 需要 558 DAI 作为初始输入
+- 第一步交换得到 1053 USDT
+- 第二步交换得到 50 MKR（最终输出）
+```
+
+**关键点：**
+
+1. **反向计算**：从最终输出开始，向前计算每一步的输入
+2. **手续费累积**：每一步都会扣除 0.3% 手续费，所以多跳交换的手续费会累积
+3. **链式依赖**：每一步的输出依赖于下一步的计算结果
+4. **整数运算**：每一步都使用整数运算，避免浮点数误差
+
 **公式推导：**
 
 假设：
