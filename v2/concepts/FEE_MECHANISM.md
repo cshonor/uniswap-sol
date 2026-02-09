@@ -52,20 +52,123 @@ Uniswap V2 对每笔交易收取 **0.3%** 的手续费，这些手续费会累�
 
 ```solidity
 function getAmountOut(
-    uint256 amountIn,
-    uint256 reserveIn,
-    uint256 reserveOut
+    uint256 amountIn,      // 输入的代币数量（用户要交换的数量）
+    uint256 reserveIn,     // 输入代币在池子中的储备量
+    uint256 reserveOut     // 输出代币在池子中的储备量
 ) public pure returns (uint256 amountOut) {
     require(amountIn > 0, "Insufficient input amount");
     require(reserveIn > 0 && reserveOut > 0, "Insufficient liquidity");
     
-    // 扣除 0.3% 手续费
-    uint256 amountInWithFee = amountIn * 997;  // 997 / 1000 = 0.997
+    // 步骤 1: 计算手续费调整后的输入数量（整数运算优化）
+    // 手续费率 f = 0.003，手续费因子 (1-f) = 0.997
+    // 注意：这里 amountIn * 997 并不是最终值，而是为了整数运算的中间值
+    // 实际公式：amountOut = (amountIn * 997 * reserveOut) / (reserveIn * 1000 + amountIn * 997)
+    // 等价于：amountOut = ((amountIn * 0.997) * reserveOut) / (reserveIn + amountIn * 0.997)
+    // 为了整数运算，分子分母同时乘以 1000，得到上面的形式
+    uint256 amountInWithFee = amountIn * 997;  // 注意：这是 amountIn * 997，不是 amountIn * 0.997
+    
+    // 步骤 2: 计算分子
+    // 分子 = amountIn * 997 * reserveOut
+    // 等价于：(amountIn * 0.997) * reserveOut * 1000
     uint256 numerator = amountInWithFee * reserveOut;
+    
+    // 步骤 3: 计算分母
+    // 分母 = reserveIn * 1000 + amountIn * 997
+    // 等价于：(reserveIn + amountIn * 0.997) * 1000
+    // 注意：分母中的 1000 是为了与分子的 1000 抵消，保持整数运算精度
     uint256 denominator = (reserveIn * 1000) + amountInWithFee;
+    
+    // 步骤 4: 计算输出数量
+    // amountOut = numerator / denominator
+    // 等价于：dy = ((1-f) * dx * y₀) / (x₀ + (1-f) * dx)
     amountOut = numerator / denominator;
 }
 ```
+
+**计算示例：**
+
+**数据来源说明：**
+
+在实际使用中，这些数据来自不同的来源：
+
+1. **`amountIn`**：用户输入的参数
+   - 用户想要交换的代币数量
+   - 例如：用户想要用 1000 DAI 换 USDT
+
+2. **`reserveIn` 和 `reserveOut`**：从链上查询的池子储备量
+   - 通过调用 Pair 合约的 `getReserves()` 函数获取
+   - 这些是池子当前的代币储备量，会实时变化
+
+**示例数据（仅用于演示计算过程）：**
+
+假设：
+- `amountIn = 1000` DAI（用户要交换的数量）
+- `reserveIn = 10000` DAI（从链上查询的池子 DAI 储备）
+- `reserveOut = 20000` USDT（从链上查询的池子 USDT 储备）
+
+**步骤 1：计算 amountInWithFee**
+```
+amountInWithFee = 1000 * 997 = 997,000
+```
+注意：这不是 `1000 * 0.997 = 997`，而是 `1000 * 997 = 997,000`
+
+**步骤 2：计算分子**
+```
+numerator = 997,000 * 20000 = 19,940,000,000
+```
+
+**步骤 3：计算分母**
+```
+denominator = (10000 * 1000) + 997,000 = 10,000,000 + 997,000 = 10,997,000
+```
+
+**步骤 4：计算输出**
+```
+amountOut = 19,940,000,000 / 10,997,000 ≈ 1,813.6 USDT
+```
+
+**验证（使用小数运算）：**
+```
+实际进入池子 = 1000 * 0.997 = 997 DAI
+amountOut = (997 * 20000) / (10000 + 997) = 19,940,000 / 10,997 ≈ 1,813.6 USDT
+```
+
+结果一致！整数运算通过分子分母同时乘以 1000 来避免浮点数。
+
+**如何在实际代码中获取储备量：**
+
+```solidity
+// 1. 获取 Pair 合约地址（通过 Factory）
+address pairAddress = factory.getPair(tokenA, tokenB);
+
+// 2. 调用 Pair 合约的 getReserves() 函数
+IUniswapV2Pair pair = IUniswapV2Pair(pairAddress);
+(uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast) = pair.getReserves();
+
+// 3. 根据代币顺序确定 reserveIn 和 reserveOut
+// 注意：需要确认 token0 和 token1 的对应关系
+address token0 = pair.token0();
+address token1 = pair.token1();
+
+uint256 reserveIn;
+uint256 reserveOut;
+
+if (tokenIn == token0) {
+    reserveIn = reserve0;
+    reserveOut = reserve1;
+} else {
+    reserveIn = reserve1;
+    reserveOut = reserve0;
+}
+
+// 4. 调用 getAmountOut 计算输出
+uint256 amountOut = getAmountOut(amountIn, reserveIn, reserveOut);
+```
+
+**注意事项：**
+- `getReserves()` 返回的是调用时的储备量，可能不是最新的（取决于最后更新时间）
+- 在实际交易前，应该使用最新的储备量进行计算
+- Router 合约会自动处理这些细节
 
 **公式推导：**
 
