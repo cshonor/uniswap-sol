@@ -69,17 +69,45 @@ liquidity = min(707, 707) = 707
 如果添加的代币比例不匹配，Router 合约会自动调整：
 
 ```solidity
-// Router 合约中的处理
+// Router 合约中的处理逻辑
+// 目标：根据用户提供的两种代币数量，计算最优的配对数量，保持池子比例不变
+
+// 步骤 1: 计算如果使用用户提供的 amountADesired，需要多少 B 代币
+// _quote 函数：amountB = (amountA * reserveB) / reserveA
+// 即：按照当前池子比例 (reserveB / reserveA)，amountADesired 需要多少 B 代币
 uint256 amountBOptimal = _quote(amountADesired, reserveA, reserveB);
+
+// 步骤 2: 判断用户提供的 amountBDesired 是否足够
 if (amountBOptimal <= amountBDesired) {
-    // 使用 amountADesired 和 amountBOptimal
+    // 情况 1: 用户提供的 B 代币足够（或刚好）
+    // 使用用户提供的全部 A 代币，只使用需要的 B 代币（保持比例）
+    // 多余的 B 代币会退回给用户
     (amountA, amountB) = (amountADesired, amountBOptimal);
 } else {
-    // 使用 amountAOptimal 和 amountBDesired
+    // 情况 2: 用户提供的 B 代币不足
+    // 需要反过来计算：如果使用用户提供的 amountBDesired，需要多少 A 代币
+    // _quote(amountBDesired, reserveB, reserveA) = (amountBDesired * reserveA) / reserveB
     uint256 amountAOptimal = _quote(amountBDesired, reserveB, reserveA);
+    
+    // 使用计算出的 A 代币数量（应该 <= amountADesired）和用户提供的全部 B 代币
+    // 多余的 A 代币会退回给用户
     (amountA, amountB) = (amountAOptimal, amountBDesired);
 }
 ```
+
+**逻辑说明：**
+
+这段代码的核心思想是**最大化使用用户提供的代币，同时保持池子比例不变**。
+
+- **`_quote` 函数**：根据当前池子比例计算最优配对数量
+  - `_quote(amountA, reserveA, reserveB) = (amountA * reserveB) / reserveA`
+  - 含义：如果使用 `amountA` 的 A 代币，按照当前比例需要多少 B 代币
+
+- **两种情况的处理**：
+  1. **情况 1**：用户提供的 B 代币足够 → 使用全部 A，只使用需要的 B
+  2. **情况 2**：用户提供的 B 代币不足 → 使用全部 B，只使用需要的 A
+
+- **目的**：确保添加流动性后，池子比例 `(reserveA + amountA) / (reserveB + amountB)` 保持不变
 
 **示例：**
 - 期望添加：1000 DAI + 2500 USDT（比例不匹配）
