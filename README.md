@@ -74,6 +74,26 @@ npx hardhat run scripts/deployCPAMM.js --network <network-name>
 ├── test/               # 测试文件
 │   ├── CPAMM.test.js  # CPAMM 测试
 │   └── Lock.js        # 示例合约测试
+├── v2/                 # Uniswap V2 文档和实现
+│   ├── core/          # 核心合约文档
+│   │   ├── Factory（工厂）合约.md
+│   │   └── Pair（交易对）合约.md
+│   ├── periphery/     # 外围合约文档
+│   │   ├── Swap 函数对比.md
+│   │   └── Uniswap V2 中代币交换的完整执行流程.md
+│   ├── concepts/      # 核心概念文档
+│   │   ├── 手续费机制.md
+│   │   ├── 添加移除流动性.md
+│   │   ├── 无常损失.md
+│   │   ├── 闪电交换.md
+│   │   └── 时间加权平均价格.md
+│   └── UNISWAP_V2_学习指南.md
+├── v3/                 # Uniswap V3 文档和实现
+│   └── concepts/      # 核心概念文档
+│       ├── Uniswap V3 简介.md
+│       ├── Uniswap V3 的核心创新——集中流动性.md
+│       ├── Uniswap V3 Tick 与价格表示详解.md
+│       └── ...（更多 V3 文档）
 ├── hardhat.config.js   # Hardhat 配置文件
 └── package.json
 ```
@@ -275,9 +295,55 @@ CPAMM 测试包括：
 - ✅ 滑点保护
 - ✅ 输出数量计算
 
-## 更多信息
+## 📚 详细文档
+
+### Uniswap V2 文档
+
+#### 学习指南
+- [Uniswap V2 学习指南](./v2/UNISWAP_V2_学习指南.md) - 完整的架构学习指南
+
+#### 核心概念
+- [手续费机制](./v2/concepts/手续费机制.md) - 0.3% 手续费的计算和分配
+- [添加移除流动性](./v2/concepts/添加移除流动性.md) - 流动性操作详解
+- [无常损失](./v2/concepts/无常损失.md) - 理解 LP 的风险
+- [闪电交换](./v2/concepts/闪电交换.md) - Flash Swaps 功能
+- [时间加权平均价格](./v2/concepts/时间加权平均价格.md) - TWAP 机制
+
+#### 核心合约
+- [Factory（工厂）合约](./v2/core/Factory（工厂）合约.md) - 工厂合约详解
+- [Pair（交易对）合约](./v2/core/Pair（交易对）合约.md) - 交易对合约详解
+
+#### 执行流程
+- [Swap 函数对比](./v2/periphery/Swap%20函数对比：swapExactTokensForTokens%20vs%20swapTokensForExactTokens.md) - 两种交换函数的区别
+- [代币交换的完整执行流程](./v2/periphery/Uniswap%20V2%20中代币交换的完整执行流程.md) - 交换流程详解
+
+#### 概念文档索引
+- [V2 核心概念文档索引](./v2/concepts/README.md) - 所有概念文档的索引和学习路径
+
+### Uniswap V3 文档
+
+#### 学习指南
+- [Uniswap V3 学习指南](./v3/UNISWAP_V3_学习指南.md) - 完整的架构学习指南
+
+#### 核心概念
+- [Uniswap V3 简介](./v3/concepts/Uniswap%20V3%20简介.md) - V3 整体介绍
+- [集中流动性](./v3/concepts/Uniswap%20V3%20的核心创新——集中流动性.md) - V3 的核心创新
+- [Tick 与价格表示](./v3/concepts/Uniswap%20V3%20Tick%20与价格表示详解.md) - 价格系统详解
+- [流动性计算](./v3/concepts/Uniswap%20V3%20中流动性的计算方法.md) - 流动性计算方法
+- [添加流动性案例](./v3/concepts/Uniswap%20V3%20添加流动性案例详解.md) - 实际操作案例
+- [单价格区间内的 Swap](./v3/concepts/Uniswap%20V3%20单价格区间内的%20Swap%20详解.md) - 基础交换机制
+- [LiquidityNet](./v3/concepts/Uniswap%20V3%20LiquidityNet%20详解.md) - 净流动性概念
+- [跨多个 tick 的交换](./v3/concepts/Uniswap%20V3%20中跨多个%20tick%20的交换（Cross%20Tick%20Swap）.md) - 复杂交换机制
+- [Tick Bitmap](./v3/concepts/Uniswap%20V3%20Tick%20Bitmap%20详解.md) - Tick 查找机制
+- [手续费计算](./v3/concepts/Uniswap%20V3%20手续费计算详解.md) - V3 手续费机制
+
+#### 概念文档索引
+- [V3 核心概念文档索引](./v3/concepts/README.md) - 所有概念文档的索引和学习路径
+
+## 🔗 外部资源
 
 - [Hardhat 文档](https://hardhat.org/docs)
-- [Uniswap V2 文档](https://docs.uniswap.org/contracts/v2/overview)
+- [Uniswap V2 官方文档](https://docs.uniswap.org/contracts/v2/overview)
+- [Uniswap V3 官方文档](https://docs.uniswap.org/contracts/v3/overview)
 - [恒定乘积做市商原理](https://docs.uniswap.org/protocol/V2/concepts/protocol-overview/how-uniswap-works)
 
