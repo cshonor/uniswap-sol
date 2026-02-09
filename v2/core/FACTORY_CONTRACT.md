@@ -6,6 +6,85 @@
 
 Factory 合约是 Uniswap V2 架构中的核心组件之一，负责**创建和管理所有的交易对（Pair）合约**。它充当一个"工厂"，按需创建流动性池。
 
+### Factory 合约与 Solidity 工厂模式
+
+**Factory 合约是 Solidity 工厂模式（Factory Pattern）的典型应用。**
+
+#### 什么是工厂模式？
+
+工厂模式是一种**创建型设计模式**，其核心思想是：
+- **一个合约负责创建其他合约的实例**
+- **集中管理合约的创建和注册**
+- **提供统一的接口来创建和查询合约**
+
+#### 为什么使用工厂模式？
+
+1. **集中管理**
+   - 所有 Pair 合约都由 Factory 统一创建和管理
+   - 便于追踪和查询所有已创建的流动性池
+
+2. **防止重复创建**
+   - Factory 维护注册表，确保每个交易对只创建一次
+   - 避免浪费 Gas 和存储空间
+
+3. **标准化创建流程**
+   - 统一的创建逻辑，确保所有 Pair 合约的一致性
+   - 自动处理代币排序、验证等逻辑
+
+4. **可扩展性**
+   - 可以轻松添加新的创建逻辑或验证规则
+   - 便于升级和维护
+
+#### Factory 合约如何实现工厂模式？
+
+```solidity
+contract CPAMMFactory {
+    // 1. 存储已创建的合约地址（注册表）
+    address[] public allPairs;
+    mapping(address => mapping(address => address)) public getPair;
+    
+    // 2. 工厂方法：创建新合约
+    function createPair(address tokenA, address tokenB) external returns (address pair) {
+        // 验证和准备
+        require(tokenA != tokenB, "CPAMM: IDENTICAL_ADDRESSES");
+        (address token0, address token1) = _sortTokens(tokenA, tokenB);
+        require(getPair[token0][token1] == address(0), "CPAMM: PAIR_EXISTS");
+        
+        // 创建新合约实例
+        CPAMM newPair = new CPAMM(token0, token1);
+        pair = address(newPair);
+        
+        // 注册到注册表
+        getPair[token0][token1] = pair;
+        getPair[token1][token0] = pair;
+        allPairs.push(pair);
+        
+        // 触发事件
+        emit PairCreated(token0, token1, pair, allPairs.length);
+    }
+    
+    // 3. 查询方法：查找已创建的合约
+    function getPair(address tokenA, address tokenB) external view returns (address);
+}
+```
+
+#### 工厂模式的典型特征
+
+1. **创建方法**：`createPair()` - 工厂方法，负责创建新实例
+2. **注册表**：`getPair` 映射和 `allPairs` 数组 - 存储所有已创建的实例
+3. **查询方法**：`getPair()`、`pairFor()` - 查找已创建的实例
+4. **验证逻辑**：创建前的验证（地址检查、重复检查等）
+5. **事件记录**：`PairCreated` - 记录创建历史
+
+#### 与其他工厂模式的对比
+
+| 特征 | Uniswap Factory | 通用工厂模式 |
+|------|----------------|------------|
+| 创建对象 | Pair 合约 | 任意合约 |
+| 注册表 | `getPair` 映射 | 映射或数组 |
+| 唯一性检查 | 代币对排序 | 可选的唯一性检查 |
+| 事件记录 | `PairCreated` | 自定义事件 |
+
 ---
 
 ## 🎯 Factory 合约的作用
@@ -196,6 +275,60 @@ event PairCreated(
 - 记录所有新创建的交易对
 - 方便链下索引和查询
 - 提供交易对创建的历史记录
+
+### 4. 工厂模式的应用
+
+**Factory 合约是 Solidity 工厂模式的经典实现：**
+
+#### 工厂模式的核心要素
+
+1. **工厂合约（Factory Contract）**
+   - `CPAMMFactory` 就是工厂合约
+   - 负责创建和管理产品合约（Pair 合约）
+
+2. **产品合约（Product Contract）**
+   - `CPAMM` 就是产品合约
+   - 由工厂合约创建的具体实例
+
+3. **创建方法（Factory Method）**
+   - `createPair()` 就是工厂方法
+   - 封装了创建逻辑和验证流程
+
+4. **注册表（Registry）**
+   - `getPair` 映射和 `allPairs` 数组
+   - 存储所有已创建的产品实例
+
+#### 工厂模式的优势
+
+```
+传统方式（无工厂）：
+用户 → 直接部署 Pair 合约
+问题：
+- 每个用户都需要部署，Gas 成本高
+- 无法统一管理
+- 可能创建重复的交易对
+
+工厂模式：
+用户 → Factory → 创建/查询 Pair 合约
+优势：
+- 集中管理，避免重复
+- 统一的创建逻辑
+- 便于查询和追踪
+```
+
+#### 实际应用场景
+
+1. **按需创建**
+   - 只有当用户需要某个交易对时，才创建对应的 Pair 合约
+   - 节省 Gas 和存储空间
+
+2. **统一管理**
+   - 所有 Pair 合约都通过 Factory 创建
+   - 便于统计和查询所有流动性池
+
+3. **标准化**
+   - 确保所有 Pair 合约使用相同的创建逻辑
+   - 保证一致性和安全性
 
 ---
 
