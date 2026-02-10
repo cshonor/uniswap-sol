@@ -491,6 +491,50 @@ function allPairsLength() external view returns (uint256) {
     : (tokenB, tokenA);
 ```
 
+**详细解释：**
+
+这一步排序的目的是**统一顺序**，无论用户传入的是 `(tokenA, tokenB)` 还是 `(tokenB, tokenA)`，都能得到一致的 `(token0, token1)` 顺序。
+
+**工作原理：**
+
+1. **比较地址大小**：
+   - 在 Solidity 中，`address` 类型可以按字节序比较大小
+   - `tokenA < tokenB` 表示 tokenA 的地址值小于 tokenB
+
+2. **统一为 token0 < token1**：
+   - 如果 `tokenA < tokenB`：`token0 = tokenA`，`token1 = tokenB`
+   - 如果 `tokenA > tokenB`：`token0 = tokenB`，`token1 = tokenA`
+   - **结果**：无论输入顺序如何，`token0` 总是地址较小的，`token1` 总是地址较大的
+
+**实际例子：**
+
+假设：
+- DAI 地址：`0x6B175474E89094C44Da98b954EedeAC495271d0F`
+- USDT 地址：`0xdAC17F958D2ee523a2206206994597C13D831ec7`
+
+**情况 1：用户传入 `(DAI, USDT)`**
+```solidity
+tokenA = DAI
+tokenB = USDT
+// DAI < USDT (按地址比较)
+// 结果：token0 = DAI, token1 = USDT
+```
+
+**情况 2：用户传入 `(USDT, DAI)`**
+```solidity
+tokenA = USDT
+tokenB = DAI
+// USDT > DAI (按地址比较)
+// 结果：token0 = DAI, token1 = USDT
+```
+
+**关键理解：**
+
+- ✅ **无论用户传入 ab 还是 ba，排序后都是 token0 < token1**
+- ✅ **这确保了 `[DAI, USDT]` 和 `[USDT, DAI]` 被识别为同一个交易对**
+- ✅ **防止重复创建：`getPair[token0][token1]` 总是唯一的**
+- ✅ **一致性：所有地方都使用相同的排序规则**
+
 ### 2. 双向映射
 
 **为什么需要双向映射？**
