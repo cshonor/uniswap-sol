@@ -152,6 +152,250 @@ function createPair(address tokenA, address tokenB)
 }
 ```
 
+---
+
+## 🎯 Factory 创建 Pair 后，Pair 到底是什么？
+
+### Pair 合约的本质
+
+**Factory 创建 Pair 后，Pair 是一个独立的智能合约实例，它本质上是一个"代币保险库 + 自动做市商"的组合体。**
+
+### Pair 合约的结构
+
+**Pair 合约包含以下核心组件：**
+
+#### 1. **代币储备（Token Reserves）**
+
+Pair 合约是一个**代币保险库**，存储两种代币：
+
+```solidity
+contract CPAMM {
+    address public token0;      // 第一个代币地址（地址较小的）
+    address public token1;     // 第二个代币地址（地址较大的）
+    
+    uint256 public reserve0;   // token0 的储备量
+    uint256 public reserve1;   // token1 的储备量
+}
+```
+
+**示例**：
+- 如果创建 DAI/USDT 交易对，Pair 合约会：
+  - 存储 DAI 代币（例如：1000 DAI）
+  - 存储 USDT 代币（例如：2000 USDT）
+  - 这两个代币就"锁"在 Pair 合约里
+
+#### 2. **LP Token 管理（ERC20 代币）**
+
+Pair 合约本身也是一个 **ERC20 代币合约**，铸造 LP Token：
+
+```solidity
+contract CPAMM is ERC20 {
+    // 继承 ERC20 标准
+    // totalSupply: LP Token 总供应量
+    // balanceOf: 每个地址持有的 LP Token 数量
+}
+```
+
+**LP Token 的作用**：
+- 代表流动性提供者在池子中的份额
+- 可以转账、交易
+- 移除流动性时需要销毁
+
+#### 3. **恒定乘积公式（CPAMM 算法）**
+
+Pair 合约实现了 **`x * y = k`** 恒定乘积公式：
+
+```solidity
+// 交换时必须满足：
+// (reserve0 + amountIn) * (reserve1 - amountOut) = reserve0 * reserve1
+```
+
+**这个公式的作用**：
+- 自动定价：根据储备量自动计算交换价格
+- 无需外部价格预言机
+- 保证池子始终有流动性
+
+#### 4. **核心功能函数**
+
+Pair 合约提供三个核心功能：
+
+```solidity
+contract CPAMM {
+    // 1. 添加流动性：存入代币，获得 LP Token
+    function addLiquidity(uint256 amount0, uint256 amount1) 
+        external returns (uint256 liquidity);
+    
+    // 2. 移除流动性：销毁 LP Token，取回代币
+    function removeLiquidity(uint256 liquidity) 
+        external returns (uint256 amount0, uint256 amount1);
+    
+    // 3. 代币交换：用一种代币换另一种代币
+    function swap(address tokenIn, uint256 amountIn) 
+        external returns (uint256 amountOut);
+}
+```
+
+### Pair 合约的完整结构图
+
+```
+┌─────────────────────────────────────┐
+│         Pair 合约 (CPAMM)            │
+├─────────────────────────────────────┤
+│                                       │
+│  📦 代币储备（保险库）                 │
+│  ├── token0: DAI                     │
+│  │   └── reserve0: 1000 DAI          │
+│  └── token1: USDT                    │
+│      └── reserve1: 2000 USDT         │
+│                                       │
+│  🪙 LP Token（ERC20）                 │
+│  ├── totalSupply: 1414 LP            │
+│  └── balanceOf[user]: 100 LP          │
+│                                       │
+│  🧮 恒定乘积公式                       │
+│  └── k = reserve0 × reserve1         │
+│      = 1000 × 2000 = 2,000,000       │
+│                                       │
+│  ⚙️ 核心功能                          │
+│  ├── addLiquidity()                   │
+│  ├── removeLiquidity()                │
+│  └── swap()                           │
+│                                       │
+└─────────────────────────────────────┘
+```
+
+### Pair 合约的生命周期
+
+**1. 创建阶段（Factory 创建）**
+```
+Factory.createPair(DAI, USDT)
+  ↓
+部署新的 CPAMM 合约
+  ↓
+Pair 合约地址：0x1234...
+  ↓
+初始状态：
+- reserve0 = 0
+- reserve1 = 0
+- totalSupply = 0
+```
+
+**2. 首次添加流动性**
+```
+用户调用 Pair.addLiquidity(1000 DAI, 2000 USDT)
+  ↓
+Pair 合约状态：
+- reserve0 = 1000 DAI
+- reserve1 = 2000 USDT
+- totalSupply = 1414 LP Token
+- 价格 = 2000 / 1000 = 2 USDT/DAI
+```
+
+**3. 运行阶段（持续交易和添加流动性）**
+```
+用户不断：
+- 添加流动性 → reserve0 和 reserve1 增加
+- 移除流动性 → reserve0 和 reserve1 减少
+- 交换代币 → reserve0 和 reserve1 变化，但 k 保持不变
+```
+
+**4. 销毁阶段（理论上）**
+```
+如果所有流动性被移除：
+- totalSupply = 0
+- reserve0 = 0
+- reserve1 = 0
+- Pair 合约仍然存在，但为空池
+```
+
+### Pair 合约的关键特性
+
+#### 1. **独立性**
+- 每个交易对都有自己独立的 Pair 合约
+- DAI/USDT 的 Pair 和 WETH/USDT 的 Pair 是完全独立的
+- 互不影响
+
+#### 2. **不可升级性**
+- Pair 合约一旦部署，代码不可更改
+- 这是 Uniswap V2 安全模型的核心
+- 用户信任的是不可变的代码
+
+#### 3. **自包含性**
+- Pair 合约包含所有必要的逻辑
+- 不依赖外部合约（除了 Factory 创建它）
+- 可以独立运行
+
+#### 4. **状态存储**
+- Pair 合约存储了池子的完整状态
+- 包括储备量、LP Token 余额等
+- 所有状态都在链上，可验证
+
+### Pair 合约与其他组件的关系
+
+```
+用户
+  ↓
+Router（路由合约）
+  ↓
+Factory（工厂合约）→ 创建 → Pair（交易对合约）
+  ↓
+Pair 合约：
+  ├── 存储代币储备
+  ├── 管理 LP Token
+  ├── 执行交换
+  └── 管理流动性
+```
+
+### 实际例子
+
+**场景：创建 DAI/USDT 交易对**
+
+1. **Factory 创建 Pair**：
+   ```solidity
+   address pair = factory.createPair(DAI, USDT);
+   // pair = 0x1234... (新部署的合约地址)
+   ```
+
+2. **Pair 合约的内容**：
+   ```solidity
+   // Pair 合约内部状态
+   token0 = DAI;        // 地址较小的代币
+   token1 = USDT;       // 地址较大的代币
+   reserve0 = 0;        // 初始为空
+   reserve1 = 0;        // 初始为空
+   totalSupply = 0;     // 还没有 LP Token
+   ```
+
+3. **用户添加流动性后**：
+   ```solidity
+   // Pair 合约内部状态
+   reserve0 = 1000;     // 1000 DAI
+   reserve1 = 2000;     // 2000 USDT
+   totalSupply = 1414;  // 1414 LP Token
+   ```
+
+4. **Pair 合约现在是一个"活跃的流动性池"**：
+   - ✅ 持有 1000 DAI 和 2000 USDT
+   - ✅ 可以执行 DAI ↔ USDT 的交换
+   - ✅ 可以继续添加或移除流动性
+   - ✅ 用户持有 LP Token 代表份额
+
+### 总结
+
+**Factory 创建 Pair 后，Pair 是：**
+
+1. ✅ **一个独立的智能合约**：部署在链上，有独立的地址
+2. ✅ **一个代币保险库**：存储两种代币的储备量
+3. ✅ **一个 ERC20 代币合约**：铸造和管理 LP Token
+4. ✅ **一个自动做市商**：实现恒定乘积公式，自动定价
+5. ✅ **一个流动性池**：用户可以添加/移除流动性，执行交换
+
+**简单理解**：
+- Factory = 工厂，负责"生产" Pair 合约
+- Pair = 产品，是一个"代币池子"，管理两种代币的交换和流动性
+
+---
+
 ### 2. `getPair` - 查询交易对地址
 
 **函数签名：**
