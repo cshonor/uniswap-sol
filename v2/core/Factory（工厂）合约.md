@@ -139,6 +139,8 @@ function createPair(address tokenA, address tokenB)
     require(getPair[token0][token1] == address(0), "CPAMM: PAIR_EXISTS");
     
     // 4. 部署新的 CPAMM 合约
+    // 注意：实际 Uniswap V2 使用 CREATE2 确保地址可预测
+    // 这里使用简化版本，详见下方 CREATE2 实现说明
     CPAMM newPair = new CPAMM(token0, token1);
     pair = address(newPair);
     
@@ -755,14 +757,170 @@ function getAllPairs(address factory)
 - 通常由第一个添加流动性的用户触发创建
 - Router 合约会自动处理创建逻辑
 
-### 4. 地址可预测性
+### 4. CREATE2 实现详解
 
-**注意：** 当前实现使用 `new` 关键字部署合约，地址不可预测。
+**注意：** 当前简化实现使用 `new` 关键字部署合约，地址不可预测。
 
 **实际 Uniswap V2 使用 CREATE2：**
 - 使用 CREATE2 可以预测合约地址
 - 允许在链下计算交易对地址
 - 提高效率和用户体验
+
+#### CREATE2 的工作原理
+
+CREATE2 是 EVM 的一个操作码，允许在创建合约前预测合约地址。地址计算公式为：
+
+```
+address = keccak256(0xff ++ deployerAddress ++ salt ++ keccak256(bytecode))[12:]
+```
+
+其中：
+- `deployerAddress`：部署者地址（Factory 合约地址）
+- `salt`：盐值（由 token0 和 token1 计算得出）
+- `bytecode`：要部署的合约字节码
+
+#### Uniswap V2 的实际实现
+
+**完整的 `createPair` 函数（使用 CREATE2）：**
+
+```solidity
+function createPair(address tokenA, address tokenB)
+    external returns (address pair)
+{
+    require(tokenA != tokenB, "UniswapV2: IDENTICAL_ADDRESSES");
+    
+    // 1. 排序代币地址
+    (address token0, address token1) = tokenA < tokenB 
+        ? (tokenA, tokenB) 
+        : (tokenB, tokenA);
+    
+    require(token0 != address(0), "UniswapV2: ZERO_ADDRESS");
+    require(getPair[token0][token1] == address(0), "UniswapV2: PAIR_EXISTS");
+    
+    // 2. 获取 Pair 合约的创建字节码
+    bytes memory bytecode = type(UniswapV2Pair).creationCode;
+    
+    // 3. 计算 salt（使用 token0 和 token1）
+    bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+    
+    // 4. 使用 CREATE2 部署合约
+    assembly {
+        pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
+    }
+    
+    // 5. 初始化 Pair 合约
+    IUniswapV2Pair(pair).initialize(token0, token1);
+    
+    // 6. 记录交易对地址
+    getPair[token0][token1] = pair;
+    getPair[token1][token0] = pair; // 双向映射
+    allPairs.push(pair);
+    
+    emit PairCreated(token0, token1, pair, allPairs.length);
+}
+```
+
+#### 关键代码解析
+
+**1. 获取创建字节码：**
+```solidity
+bytes memory bytecode = type(UniswapV2Pair).creationCode;
+```
+- `type(UniswapV2Pair).creationCode` 返回 Pair 合约的创建字节码
+- 这是部署合约所需的完整字节码
+
+**2. 计算 salt：**
+```solidity
+bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+```
+- `salt` 是 CREATE2 的关键参数
+- 使用 `token0` 和 `token1` 的地址计算 salt
+- 确保相同代币对总是生成相同的 salt，从而生成相同的合约地址
+
+**3. CREATE2 汇编调用：**
+```solidity
+assembly {
+    pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
+}
+```
+
+**参数说明：**
+- `0`：发送的 ETH 数量（0 wei）
+- `add(bytecode, 32)`：字节码数据的起始位置
+  - Solidity 的 `bytes` 类型前 32 字节存储长度
+  - `add(bytecode, 32)` 跳过长度字段，指向实际字节码
+- `mload(bytecode)`：字节码的长度
+  - `mload(bytecode)` 读取前 32 字节，即字节码长度
+- `salt`：计算出的盐值
+
+**4. 初始化 Pair 合约：**
+```solidity
+IUniswapV2Pair(pair).initialize(token0, token1);
+```
+- CREATE2 创建的合约需要手动初始化
+- `initialize` 函数设置 `token0` 和 `token1` 的值
+- 这是必要的，因为构造函数参数在 CREATE2 中无法直接传递
+
+#### CREATE2 的优势
+
+1. **地址可预测性**：
+   - 可以在链下预先计算 Pair 合约地址
+   - 不需要实际部署就能知道地址
+
+2. **链下计算地址**：
+   ```solidity
+   // 可以在链下计算 Pair 地址
+   function pairFor(address factory, address tokenA, address tokenB) 
+       internal pure returns (address pair) 
+   {
+       (address token0, address token1) = sortTokens(tokenA, tokenB);
+       bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+       bytes32 bytecodeHash = keccak256(type(UniswapV2Pair).creationCode);
+       pair = address(uint160(uint256(keccak256(
+           abi.encodePacked(
+               hex'ff',
+               factory,
+               salt,
+               bytecodeHash
+           )
+       ))));
+   }
+   ```
+
+3. **Gas 优化**：
+   - 可以预先计算地址，避免重复查询
+   - Router 合约可以使用 `pairFor` 函数直接计算地址，而不需要调用 Factory
+
+4. **唯一性保证**：
+   - 相同的 `salt` 和 `bytecode` 总是生成相同的地址
+   - 如果地址已被占用，CREATE2 会失败，防止意外覆盖
+
+#### CREATE2 vs 标准部署
+
+| 特性 | 标准部署 (`new`) | CREATE2 |
+|------|----------------|--------|
+| 地址可预测 | ❌ 否 | ✅ 是 |
+| 链下计算 | ❌ 否 | ✅ 是 |
+| Gas 成本 | 较低 | 稍高 |
+| 初始化方式 | 构造函数 | `initialize` 函数 |
+| 唯一性检查 | 自动 | 需要手动检查 |
+
+#### 为什么需要 initialize 函数？
+
+CREATE2 创建的合约无法在创建时传递构造函数参数，因此需要单独的 `initialize` 函数：
+
+```solidity
+// Pair 合约中的 initialize 函数
+function initialize(address _token0, address _token1) external {
+    require(msg.sender == factory, "UniswapV2: FORBIDDEN");
+    token0 = _token0;
+    token1 = _token1;
+}
+```
+
+**安全措施**：
+- 只能由 Factory 合约调用（`msg.sender == factory`）
+- 只能初始化一次（通过检查 `token0 == address(0)`）
 
 ---
 
