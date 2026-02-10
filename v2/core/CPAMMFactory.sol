@@ -6,7 +6,7 @@ import "./CPAMM.sol";
 /**
  * @title CPAMMFactory - Factory Contract for Creating CPAMM Pairs
  * @dev 工厂合约，用于创建和管理多个 CPAMM 交易对
- * 类似 Uniswap V2 Factory 的核心功能
+ * 类似 Uniswap V2 Factory 的核心功能，使用 CREATE2 确保地址可预测
  */
 contract CPAMMFactory {
     // 存储所有已创建的交易对地址
@@ -32,7 +32,7 @@ contract CPAMMFactory {
     }
     
     /**
-     * @dev 创建新的交易对
+     * @dev 创建新的交易对（使用 CREATE2）
      * @param tokenA 代币A地址
      * @param tokenB 代币B地址
      * @return pair 新创建的交易对地址
@@ -41,8 +41,9 @@ contract CPAMMFactory {
      * 1. 验证两个代币地址不同且不为零地址
      * 2. 确保代币对的顺序（token0 < token1），避免重复创建
      * 3. 检查该交易对是否已存在
-     * 4. 部署新的 CPAMM 合约
-     * 5. 记录交易对地址并触发事件
+     * 4. 使用 CREATE2 部署新的 CPAMM 合约（地址可预测）
+     * 5. 初始化 Pair 合约
+     * 6. 记录交易对地址并触发事件
      */
     function createPair(address tokenA, address tokenB)
         external
@@ -52,21 +53,32 @@ contract CPAMMFactory {
         require(tokenA != address(0), "CPAMM: ZERO_ADDRESS");
         require(tokenB != address(0), "CPAMM: ZERO_ADDRESS");
         
-        // 确保 token0 < token1，这样同一个交易对只会有一个顺序
+        // 1. 排序代币地址（确保 token0 < token1）
         (address token0, address token1) = tokenA < tokenB
             ? (tokenA, tokenB)
             : (tokenB, tokenA);
         
-        // 检查交易对是否已存在
+        // 2. 检查交易对是否已存在
         require(getPair[token0][token1] == address(0), "CPAMM: PAIR_EXISTS");
         
-        // 部署新的 CPAMM 合约
-        // 注意：这里使用标准部署，实际 Uniswap V2 使用 CREATE2 确保地址可预测
-        // 为了简化，我们先使用 new 关键字
-        CPAMM newPair = new CPAMM(token0, token1);
-        pair = address(newPair);
+        // 3. 获取 Pair 合约的创建字节码
+        bytes memory bytecode = type(CPAMM).creationCode;
         
-        // 记录交易对地址
+        // 4. 计算 salt（使用 token0 和 token1）
+        bytes32 salt = keccak256(abi.encodePacked(token0, token1));
+        
+        // 5. 使用 CREATE2 部署合约
+        assembly {
+            pair := create2(0, add(bytecode, 32), mload(bytecode), salt)
+        }
+        
+        // 6. 检查部署是否成功
+        require(pair != address(0), "CPAMM: CREATE2_FAILED");
+        
+        // 7. 初始化 Pair 合约
+        CPAMM(pair).initialize(token0, token1);
+        
+        // 8. 记录交易对地址
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair; // 双向映射，方便查找
         allPairs.push(pair);

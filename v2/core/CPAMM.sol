@@ -15,8 +15,9 @@ interface IERC20 {
  * @dev 实现恒定乘积自动做市商算法 x * y = k
  */
 contract CPAMM {
-    IERC20 public immutable token0;
-    IERC20 public immutable token1;
+    address public factory;
+    IERC20 public token0;
+    IERC20 public token1;
     
     uint256 public reserve0;
     uint256 public reserve1;
@@ -36,9 +37,22 @@ contract CPAMM {
     );
     event Sync(uint256 reserve0, uint256 reserve1);
     
-    constructor(address _token0, address _token1) {
-        require(_token0 != address(0) && _token1 != address(0), "Invalid token address");
-        require(_token0 != _token1, "Tokens must be different");
+    // 用于 CREATE2 部署：构造函数不设置 token0 和 token1
+    constructor() {
+        factory = msg.sender;
+    }
+    
+    /**
+     * @dev 初始化函数（用于 CREATE2 部署）
+     * @param _token0 代币0地址
+     * @param _token1 代币1地址
+     * 注意：只能由 Factory 合约调用，且只能调用一次
+     */
+    function initialize(address _token0, address _token1) external {
+        require(msg.sender == factory, "CPAMM: FORBIDDEN");
+        require(_token0 != address(0) && _token1 != address(0), "CPAMM: ZERO_ADDRESS");
+        require(_token0 != _token1, "CPAMM: IDENTICAL_ADDRESSES");
+        require(address(token0) == address(0) && address(token1) == address(0), "CPAMM: ALREADY_INITIALIZED");
         
         token0 = IERC20(_token0);
         token1 = IERC20(_token1);

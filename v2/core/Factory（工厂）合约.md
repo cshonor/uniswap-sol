@@ -844,14 +844,106 @@ assembly {
 }
 ```
 
-**参数说明：**
-- `0`：发送的 ETH 数量（0 wei）
-- `add(bytecode, 32)`：字节码数据的起始位置
-  - Solidity 的 `bytes` 类型前 32 字节存储长度
-  - `add(bytecode, 32)` 跳过长度字段，指向实际字节码
-- `mload(bytecode)`：字节码的长度
-  - `mload(bytecode)` 读取前 32 字节，即字节码长度
-- `salt`：计算出的盐值
+**什么是 `assembly`？**
+
+`assembly` 是 Solidity 的内联汇编（Inline Assembly），允许直接编写 EVM 字节码级别的代码。使用 `assembly` 可以：
+- 直接调用 EVM 操作码（如 `create2`）
+- 更精确地控制内存和存储
+- 优化 Gas 消耗
+
+**为什么需要 `assembly`？**
+
+Solidity 没有直接调用 `create2` 操作码的高级语法，必须使用 `assembly` 块来调用底层 EVM 操作码。
+
+**`create2` 操作码详解：**
+
+`create2` 是 EVM 的一个操作码，用于创建新合约。它的完整签名是：
+```
+create2(value, offset, length, salt) -> address
+```
+
+**参数说明（逐行解析）：**
+
+1. **`pair := create2(...)`**
+   - `pair` 是返回的变量，存储新创建的合约地址
+   - `:=` 是汇编中的赋值操作符
+
+2. **`0`** - 发送的 ETH 数量
+   - 表示不发送任何 ETH 给新合约
+   - 单位是 wei（1 ETH = 10^18 wei）
+
+3. **`add(bytecode, 32)`** - 字节码数据的起始位置
+   - `bytecode` 是 `bytes memory` 类型，在内存中的布局是：
+     ```
+     [0-31 字节]：长度（32 字节）
+     [32+ 字节]：实际字节码数据
+     ```
+   - `add(bytecode, 32)` 计算 `bytecode` 的地址 + 32 字节
+   - 这样就能跳过长度字段，直接指向实际的字节码数据
+
+4. **`mload(bytecode)`** - 字节码的长度
+   - `mload` 是汇编指令，从内存中加载 32 字节的数据
+   - `mload(bytecode)` 读取 `bytecode` 的前 32 字节，即字节码的长度
+   - 这个长度告诉 EVM 要读取多少字节的数据
+
+5. **`salt`** - 盐值
+   - 这是之前计算的 `bytes32 salt = keccak256(abi.encodePacked(token0, token1))`
+   - 用于确保相同参数下总是生成相同的合约地址
+
+**完整执行流程：**
+
+```
+1. EVM 读取内存位置 add(bytecode, 32) 开始的 mload(bytecode) 字节数据
+   ↓
+2. 使用 salt 和这些字节码计算新合约地址
+   ↓
+3. 如果该地址未被占用，部署合约
+   ↓
+4. 返回新合约的地址，赋值给 pair
+```
+
+**内存布局示例：**
+
+假设 `bytecode` 在内存中的布局：
+```
+内存地址         内容
+0x100          [长度：0x200（512字节）]
+0x120          [实际字节码开始：0x6080604052...]
+0x320          [字节码结束]
+```
+
+那么：
+- `bytecode` = 0x100（指向内存地址）
+- `mload(bytecode)` = 0x200（读取长度：512字节）
+- `add(bytecode, 32)` = 0x120（跳过长度，指向实际数据）
+- `create2` 会从 0x120 开始读取 0x200 字节的数据
+
+**为什么需要这样处理？**
+
+因为 Solidity 的 `bytes memory` 类型在内存中的存储格式是：
+- 前 32 字节：长度
+- 后续字节：实际数据
+
+而 `create2` 操作码需要的是：
+- 数据起始位置（跳过长度）
+- 数据长度（从长度字段读取）
+
+所以需要：
+- `add(bytecode, 32)` 跳过长度字段
+- `mload(bytecode)` 读取长度字段的值
+
+**等价的高级语言代码（伪代码）：**
+
+```solidity
+// 如果 Solidity 有 create2 的高级语法（实际上没有）
+pair = create2(
+    value: 0,
+    bytecode: bytecode,  // Solidity 会自动处理内存布局
+    salt: salt
+);
+```
+
+但由于 Solidity 没有这个高级语法，必须使用 `assembly` 手动处理内存布局。
 
 **4. 初始化 Pair 合约：**
 ```solidity
